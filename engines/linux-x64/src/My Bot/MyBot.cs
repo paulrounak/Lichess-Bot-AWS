@@ -8,6 +8,8 @@ public class MyBot : IChessBot
     private int[] _bonusPointsPerAttackEarly = { 0, 0, 4, 5, 1, 1, 0 };
     private int[] _bonusPointsPerAttackLate = { 0, 0, 2, 3, 5, 3, 1 };
     private int[] _moveScores = new int[218]; // for sorting moves
+    private int[,] history = new int[7, 64];
+
     Random _rng = new Random();
 
     // Transposition table
@@ -17,6 +19,7 @@ public class MyBot : IChessBot
 
     public Move Think(Board board, Timer timer)
     {
+        int nodes = 0;
         count++;
         Console.ForegroundColor = ConsoleColor.Green;
         Console.Write("Move Number: ");
@@ -48,29 +51,29 @@ public class MyBot : IChessBot
                 return legalMoves[15];
         }
 
-        int currentDepth;
+        int currentDepth = 1;
         int rootEval = 0;
 
-        if(timer.MillisecondsRemaining <= 10000){
-            for (currentDepth = 1; 
-                timer.MillisecondsElapsedThisTurn < Math.Min(100, timer.MillisecondsRemaining / 60); 
-                currentDepth++)
+        // allocate one-quarter of the remaining time for searching
+        int maxSearchTime = timer.MillisecondsRemaining / 4;
+
+        try
+        {
+            // continue deepening until reaching max depth or using too much of the allocated time
+            while (currentDepth <= 200 && timer.MillisecondsElapsedThisTurn < maxSearchTime / 10)
             {
                 rootEval = Search(currentDepth, 0, -1000000000, 1000000000);
+                Console.WriteLine($"info depth {currentDepth} nodes {nodes} eval {rootEval / 100.0} time {timer.MillisecondsElapsedThisTurn} ms {bestMove}");
+                currentDepth++;
             }
         }
-
-        else {        
-            for (currentDepth = 1; 
-                timer.MillisecondsElapsedThisTurn < Math.Min(board.PlyCount <= 14 ? 500 : timer.GameStartTimeMilliseconds / 60, (timer.MillisecondsRemaining - 10000) / 60); 
-                currentDepth++)
-            {
-                rootEval = Search(currentDepth, 0, -1000000000, 1000000000);
-            }
+        catch (Exception)
+        {
+            // exit gracefully on timeout...
         }
 
         Console.Write("MyBot: ");
-        Console.WriteLine(currentDepth);
+        Console.WriteLine(currentDepth - 1);
 
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.Write("Eval -> ");
@@ -82,6 +85,7 @@ public class MyBot : IChessBot
         
         int Search(int depth, int ply, int alpha, int beta)
         {
+            nodes++;
             // First check if there's a checkmate
             if (board.IsInCheckmate())
                 return -100000 + ply * 1000; // multiply by depth, the sooner the mate the better
@@ -103,7 +107,7 @@ public class MyBot : IChessBot
             if (board.IsInCheck()) // Check extension
                 extend = 1;
 
-            if (depth <= 2)
+            if (depth == 0)
                 return QSearch(alpha, beta);
 
             byte evalType = 1; // Alpha
@@ -115,16 +119,35 @@ public class MyBot : IChessBot
             else
                 extend = 1; // Forced move/One reply extension
 
+            int moveIndex = 0;
             foreach (Move move in legalMoves)
             {
                 board.MakeMove(move);
-                int eval = -Search(depth - 1 + extend, ply + 1, -beta, -alpha);
+                int eval;
+                // reduction for later moves if depth is sufficient
+                if (moveIndex > 1 && depth > 1)
+                {
+                    // search at a reduced depth (reduced by one ply)
+                    eval = -Search(depth - 2 + extend, ply + 1, -beta, -alpha);
+                    // if the reduced search shows promise, re-search at full depth
+                    if (eval > alpha)
+                    {
+                        eval = -Search(depth - 1 + extend, ply + 1, -beta, -alpha);
+                    }
+                }
+                else
+                {
+                    eval = -Search(depth - 1 + extend, ply + 1, -beta, -alpha);
+                }
+                
                 board.UndoMove(move);
 
                 if (eval >= beta)
                 {
-                    StoreEvalInTT(eval, 2); // Beta
-                    return beta;
+                    int bonus = depth * depth;
+                    history[(int)move.MovePieceType, move.TargetSquare.Index] += bonus;
+                    StoreEvalInTT(eval, 2);
+                    return beta; // Cut off the branch
                 }
 
                 if (eval > alpha)
@@ -134,6 +157,7 @@ public class MyBot : IChessBot
                     if (ply == 0)
                         bestMove = move;
                 }
+                moveIndex++;
             }
 
             StoreEvalInTT(alpha, evalType);
@@ -282,18 +306,18 @@ public class MyBot : IChessBot
             int EvaluateCastlingBonus(Board board)
             {
                 int bonus = 0;
-                
-                Square whiteKingSquare = board.GetKingSquare(board.IsWhiteToMove);
-                if (whiteKingSquare.File >= 6 && whiteKingSquare.Rank == 0) // Kingside (g1)
-                    bonus += 150;
-                else if (whiteKingSquare.File <= 2 && whiteKingSquare.Rank == 0) // Queenside (c1)
-                    bonus += 150;
-    
-                Square blackKingSquare = board.GetKingSquare(!board.IsWhiteToMove);
-                if (blackKingSquare.File >= 6 && blackKingSquare.Rank == 7) // Kingside (g8)
-                    bonus -= 150;
-                else if (blackKingSquare.File <= 2 && blackKingSquare.Rank == 7) // Queenside (c8)
-                    bonus -= 150;
+
+                Square whiteKing = board.GetKingSquare(true);
+                if (whiteKing.File == 6 && whiteKing.Rank == 0) // Kingside (g1)
+                    bonus += 50;
+                else if (whiteKing.File == 2 && whiteKing.Rank == 0) // Queenside (c1)
+                    bonus += 40;
+
+                Square blackKing = board.GetKingSquare(false);
+                if (blackKing.File == 6 && blackKing.Rank == 7) // Kingside (g8)
+                    bonus -= 50;
+                else if (blackKing.File == 2 && blackKing.Rank == 7) // Queenside (c8)
+                    bonus -= 40;
 
                 return bonus;
             }
@@ -331,10 +355,10 @@ public class MyBot : IChessBot
                     continue;
                 }
 
-                if (move.CapturePieceType != PieceType.None)
-                {
-                    int captureValue = _pieceValues[(int)move.CapturePieceType] - _pieceValues[(int)move.MovePieceType];
-                    _moveScores[i] += 10 * captureValue;
+                if (move.CapturePieceType != PieceType.None) {
+                    _moveScores[i] += 100000 + (_pieceValues[(int)move.CapturePieceType] - _pieceValues[(int)move.MovePieceType]);
+                } else {
+                    _moveScores[i] += history[(int)move.MovePieceType, move.TargetSquare.Index];
                 }
 
                 if (move.IsPromotion)

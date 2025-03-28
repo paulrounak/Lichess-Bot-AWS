@@ -30,11 +30,11 @@ namespace ChessChallenge.Example
 
             int currentDepth;
             // Iterative deepening
-            for (currentDepth = 1; timer.MillisecondsElapsedThisTurn < (Math.Min(100, timer.MillisecondsRemaining / 40) + timer.IncrementMilliseconds) / 4; currentDepth++)
+            for (currentDepth = 1; timer.MillisecondsElapsedThisTurn < (Math.Min(1000, timer.MillisecondsRemaining / 40) + timer.IncrementMilliseconds) / 4; currentDepth++)
                 Search(currentDepth, 0, -1000000000, 1000000000);
             
             Console.Write("EvilBot: ");
-            Console.WriteLine(currentDepth);
+            Console.WriteLine(currentDepth - 1);
             return bestMove;
 
             int Search(int depth, int ply, int alpha, int beta)
