@@ -3,18 +3,126 @@ using System;
 
 public class MyBot : IChessBot
 {
+    private const int MAX_PLY = 256;
+    private const int KILLER_MOVE_BONUS = 9000;
+    private const int COUNTERMOVE_BONUS = 8000;
+    private const int IID_THRESHOLD = 3;
+
     // { None, Pawn, Knight, Bishop, Rook, Queen, King}
-    private int[] _pieceValues = { 0, 100, 300, 320, 500, 950, 10000 };
+    private int[] _pieceValues = { 0, 100, 300, 320, 500, 1000, 10000 };
     private int[] _bonusPointsPerAttackEarly = { 0, 0, 4, 5, 1, 1, 0 };
     private int[] _bonusPointsPerAttackLate = { 0, 0, 2, 3, 5, 3, 1 };
     private int[] _moveScores = new int[218]; // for sorting moves
     private int[,] history = new int[7, 64];
+    private Move[,] countermoveTable = new Move[64, 64];  // Indexed by [fromSquare, toSquare]
+    private Move[,] killerMoves = new Move[MAX_PLY, 2];
 
     Random _rng = new Random();
 
     // Transposition table
     private TTEntry[] _ttEntries = new TTEntry[16000000];
     int count = 0;
+
+    // Piece‑Square tables for white
+    private static readonly int[] PawnTable = new int[64] {
+        0,   0,   0,   0,   0,   0,   0,   0,
+        50,  50,  50,  50,  50,  50,  50,  50,
+        10,  10,  20,  30,  30,  20,  10,  10,
+        5,   5,  10,  25,  25,  10,   5,   5,
+        0,   0,   0,  20,  20,   0,   0,   0,
+        5,  -5, -10,   0,   0, -10,  -5,   5,
+        5,  10,  10, -20, -20,  10,  10,   5,
+        0,   0,   0,   0,   0,   0,   0,   0
+    };
+
+    private static readonly int[] KnightTable = new int[64] {
+        -50, -40, -30, -30, -30, -30, -40, -50,
+        -40, -20,   0,   0,   0,   0, -20, -40,
+        -30,   0,  10,  15,  15,  10,   0, -30,
+        -30,   5,  15,  20,  20,  15,   5, -30,
+        -30,   0,  15,  20,  20,  15,   0, -30,
+        -30,   5,  10,  15,  15,  10,   5, -30,
+        -40, -20,   0,   5,   5,   0, -20, -40,
+        -50, -40, -30, -30, -30, -30, -40, -50
+    };
+
+    private static readonly int[] BishopTable = new int[64] {
+        -20, -10, -10, -10, -10, -10, -10, -20,
+        -10,   0,   0,   0,   0,   0,   0, -10,
+        -10,   0,   5,  10,  10,   5,   0, -10,
+        -10,   5,   5,  10,  10,   5,   5, -10,
+        -10,   0,  10,  10,  10,  10,   0, -10,
+        -10,  10,  10,  10,  10,  10,  10, -10,
+        -10,   5,   0,   0,   0,   0,   5, -10,
+        -20, -10, -10, -10, -10, -10, -10, -20
+    };
+
+    private static readonly int[] RookTable = new int[64] {
+        0,   0,   0,   0,   0,   0,   0,   0,
+        5,  10,  10,  10,  10,  10,  10,   5,
+        -5,   0,   0,   0,   0,   0,   0,  -5,
+        -5,   0,   0,   0,   0,   0,   0,  -5,
+        -5,   0,   0,   0,   0,   0,   0,  -5,
+        -5,   0,   0,   0,   0,   0,   0,  -5,
+        -5,   0,   0,   0,   0,   0,   0,  -5,
+        0,   0,   0,   5,   5,   0,   0,   0
+    };
+
+    private static readonly int[] QueenTable = new int[64] {
+        -20, -10, -10,  -5,  -5, -10, -10, -20,
+        -10,   0,   0,   0,   0,   0,   0, -10,
+        -10,   0,   5,   5,   5,   5,   0, -10,
+        -5,   0,   5,   5,   5,   5,   0,  -5,
+        0,   0,   5,   5,   5,   5,   0,  -5,
+        -10,   5,   5,   5,   5,   5,   0, -10,
+        -10,   0,   5,   0,   0,   0,   0, -10,
+        -20, -10, -10,  -5,  -5, -10, -10, -20
+    };
+
+    private static readonly int[] KingTable = new int[64] {
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -30, -40, -40, -50, -50, -40, -40, -30,
+        -20, -30, -30, -40, -40, -30, -30, -20,
+        -10, -20, -20, -20, -20, -20, -20, -10,
+        20,  20,   0,   0,   0,   0,  20,  20,
+        20,  30,  10,   0,   0,  10,  30,  20
+    };
+
+    // Mirrors a square index vertically (for black).
+    private int MirrorIndex(int index)
+    {
+        int rank = index / 8;
+        int file = index % 8;
+        return (7 - rank) * 8 + file;
+    }
+
+    // Returns the piece-square bonus for a given piece type at a target square.
+    private int GetPieceSquareBonus(PieceType pieceType, Square targetSquare, bool isWhite)
+    {
+        int index = targetSquare.Index;
+        if (!isWhite)
+            index = MirrorIndex(index);
+        switch (pieceType)
+        {
+            case PieceType.Pawn:
+                return PawnTable[index];
+            case PieceType.Knight:
+                return KnightTable[index];
+            case PieceType.Bishop:
+                return BishopTable[index];
+            case PieceType.Rook:
+                return RookTable[index];
+            case PieceType.Queen:
+                return QueenTable[index];
+            case PieceType.King:
+                return KingTable[index];
+            default:
+                return 0;
+        }
+    }
+
 
 
     public Move Think(Board board, Timer timer)
@@ -32,18 +140,18 @@ public class MyBot : IChessBot
 
         // Forced move, don't waste time searching
         if (legalMoves.Length == 1) {
-            Console.WriteLine("MyBot: Forced Move");
+            // Console.WriteLine("MyBot: Forced Move");
             return bestMove;
         }
 
         if(board.PlyCount == 0 && board.IsWhiteToMove) {
-            Console.WriteLine("MyBot: Opening Move");
+            // Console.WriteLine("MyBot: Opening Move");
             return legalMoves[16];
         }
         
         // push pawn on non attacked center square
         if(board.PlyCount == 1 && !board.IsWhiteToMove) {
-            Console.WriteLine("MyBot: Opening Move");
+            // Console.WriteLine("MyBot: Opening Move");
             if (board.SquareIsAttackedByOpponent(legalMoves[15].TargetSquare)) {
                 return legalMoves[16];                
             }
@@ -64,13 +172,13 @@ public class MyBot : IChessBot
             {
                 rootEval = Search(currentDepth, 0, -1000000000, 1000000000);
                 // Console.WriteLine($"info depth {currentDepth} nodes {nodes} score cp {rootEval / 100.0} time {timer.MillisecondsElapsedThisTurn} pv {ChessChallenge.Chess.MoveUtility.GetMoveNameUCI(new(bestMove.RawValue))}");
-                Console.WriteLine( // #DEBUG
-                    "info depth {0} time {1} nodes {2} pv {3} score cp {4}", // #DEBUG
-                    currentDepth, // #DEBUG
-                    timer.MillisecondsElapsedThisTurn, // #DEBUG
-                    nodes, // #DEBUG
-                    ChessChallenge.Chess.MoveUtility.GetMoveNameUCI(new(bestMove.RawValue)), // #DEBUG
-                    rootEval // #DEBUG
+                Console.WriteLine(
+                    "info depth {0} time {1} nodes {2} pv {3} score cp {4}",
+                    currentDepth,
+                    timer.MillisecondsElapsedThisTurn,
+                    nodes,
+                    ChessChallenge.Chess.MoveUtility.GetMoveNameUCI(new(bestMove.RawValue)),
+                    rootEval
                 );
                 currentDepth++;
             }
@@ -91,7 +199,7 @@ public class MyBot : IChessBot
         
         return bestMove;
         
-        int Search(int depth, int ply, int alpha, int beta)
+        int Search(int depth, int ply, int alpha, int beta, Move prevMove = default)
         {
             nodes++;
             // First check if there's a checkmate
@@ -104,6 +212,11 @@ public class MyBot : IChessBot
             // Try get evaluation from Transposition Table
             TTEntry entry = _ttEntries[board.ZobristKey % 16000000];
             int tableEval = entry._evalValue;
+
+            if (depth >= IID_THRESHOLD && entry._zobristKey != board.ZobristKey)
+            {
+                int iidEval = Search(depth / 2, ply, alpha, beta);
+            }
 
             if (ply != 0 && entry._zobristKey == board.ZobristKey && entry._depth >= depth
                 && (entry._nodeType == 0
@@ -118,12 +231,28 @@ public class MyBot : IChessBot
             if (depth == 0)
                 return QSearch(alpha, beta);
 
+            int totalPieces = BitboardHelper.GetNumberOfSetBits(board.AllPiecesBitboard);
+            if (depth >= 2 && !board.IsInCheck() && totalPieces > 8)
+            {
+                if (board.TrySkipTurn())
+                {
+                    int nullReduction = 2; 
+                    int nullScore = -Search(depth - nullReduction, ply + 1, -beta, -beta + 1);
+                    board.UndoSkipTurn();
+                    if (nullScore >= beta)
+                    {
+                        StoreEvalInTT(nullScore, 2);
+                        return beta;
+                    }
+                }
+            }
+
             byte evalType = 1; // Alpha
             Span<Move> legalMoves = stackalloc Move[218];
             board.GetLegalMovesNonAlloc(ref legalMoves);
 
             if (legalMoves.Length > 1)
-                OrderMoves(ref legalMoves, ply == 0 && depth > 1);
+                OrderMoves(ref legalMoves, ply == 0 && depth > 1, ply, prevMove);
             else
                 extend = 1; // Forced move/One reply extension
 
@@ -136,11 +265,11 @@ public class MyBot : IChessBot
                 if (moveIndex > 1 && depth > 1)
                 {
                     // search at a reduced depth (reduced by one ply)
-                    eval = -Search(depth - 2 + extend, ply + 1, -beta, -alpha);
+                    eval = -Search(depth - 2 + extend, ply + 1, -beta, -alpha, move);
                     // if the reduced search shows promise, re-search at full depth
                     if (eval > alpha)
                     {
-                        eval = -Search(depth - 1 + extend, ply + 1, -beta, -alpha);
+                        eval = -Search(depth - 1 + extend, ply + 1, -beta, -alpha, move);
                     }
                 }
                 else
@@ -152,6 +281,18 @@ public class MyBot : IChessBot
 
                 if (eval >= beta)
                 {
+                    if (ply > 0 && prevMove.RawValue != 0)
+                    {
+                        countermoveTable[prevMove.StartSquare.Index, prevMove.TargetSquare.Index] = move;
+                    }
+                    if (move.CapturePieceType == PieceType.None && !move.IsPromotion)
+                    {
+                        if (killerMoves[ply, 0].RawValue != move.RawValue)
+                        {
+                            killerMoves[ply, 1] = killerMoves[ply, 0];
+                            killerMoves[ply, 0] = move;
+                        }
+                    }
                     int bonus = depth * depth;
                     history[(int)move.MovePieceType, move.TargetSquare.Index] += bonus;
                     StoreEvalInTT(eval, 2);
@@ -313,19 +454,20 @@ public class MyBot : IChessBot
             
             int EvaluateCastlingBonus(Board board)
             {
+                const int CASTLE_BONUS = 50;
                 int bonus = 0;
 
                 Square whiteKing = board.GetKingSquare(true);
-                if (whiteKing.File == 6 && whiteKing.Rank == 0) // Kingside (g1)
-                    bonus += 50;
-                else if (whiteKing.File == 2 && whiteKing.Rank == 0) // Queenside (c1)
-                    bonus += 40;
+                if ((whiteKing.File == 6 && whiteKing.Rank == 0) || (whiteKing.File == 2 && whiteKing.Rank == 0))
+                {
+                    bonus += CASTLE_BONUS;
+                }
 
                 Square blackKing = board.GetKingSquare(false);
-                if (blackKing.File == 6 && blackKing.Rank == 7) // Kingside (g8)
-                    bonus -= 50;
-                else if (blackKing.File == 2 && blackKing.Rank == 7) // Queenside (c8)
-                    bonus -= 40;
+                if ((blackKing.File == 6 && blackKing.Rank == 7) || (blackKing.File == 2 && blackKing.Rank == 7))
+                {
+                    bonus += -CASTLE_BONUS;
+                }
 
                 return bonus;
             }
@@ -350,7 +492,7 @@ public class MyBot : IChessBot
                 }
         }
 
-        void OrderMoves(ref Span<Move> moves, bool useBestMove)
+        void OrderMoves(ref Span<Move> moves, bool useBestMove, int ply = -1, Move prevMove = default)
         {
             for (int i = 0; i < moves.Length; i++)
             {
@@ -363,10 +505,29 @@ public class MyBot : IChessBot
                     continue;
                 }
 
-                if (move.CapturePieceType != PieceType.None) {
+                if (move.CapturePieceType != PieceType.None)
+                {
                     _moveScores[i] += 100000 + (_pieceValues[(int)move.CapturePieceType] - _pieceValues[(int)move.MovePieceType]);
-                } else {
+                }
+                else
+                {
                     _moveScores[i] += history[(int)move.MovePieceType, move.TargetSquare.Index];
+                    
+                    // Add bonus from countermove heuristic, if applicable.
+                    if (countermoveTable[prevMove.StartSquare.Index, prevMove.TargetSquare.Index].RawValue == move.RawValue)
+                    {
+                        _moveScores[i] += COUNTERMOVE_BONUS;
+                    }
+                    // Add bonus from killer moves if applicable.
+                    if (ply != -1 && move.CapturePieceType == PieceType.None && !move.IsPromotion)
+                    {
+                        if (killerMoves[ply, 0].RawValue == move.RawValue || killerMoves[ply, 1].RawValue == move.RawValue)
+                        {
+                            _moveScores[i] += KILLER_MOVE_BONUS;
+                        }
+                    }
+                    // Add piece-square table bonus for quiet moves.
+                    _moveScores[i] += GetPieceSquareBonus(move.MovePieceType, move.TargetSquare, board.IsWhiteToMove);
                 }
 
                 if (move.IsPromotion)
