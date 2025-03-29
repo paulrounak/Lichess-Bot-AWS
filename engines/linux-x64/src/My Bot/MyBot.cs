@@ -21,10 +21,10 @@ public class MyBot : IChessBot
     {
         int nodes = 0;
         count++;
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.Write("Move Number: ");
-        Console.WriteLine(board.PlyCount / 2 + 1);
-        Console.ResetColor();
+        // Console.ForegroundColor = ConsoleColor.Green;
+        // Console.Write("Move Number: ");
+        // Console.WriteLine(board.PlyCount / 2 + 1);
+        // Console.ResetColor();
 
         Span<Move> legalMoves = stackalloc Move[218];
         board.GetLegalMovesNonAlloc(ref legalMoves);
@@ -63,7 +63,15 @@ public class MyBot : IChessBot
             while (currentDepth <= 200 && timer.MillisecondsElapsedThisTurn < maxSearchTime / 10)
             {
                 rootEval = Search(currentDepth, 0, -1000000000, 1000000000);
-                Console.WriteLine($"info depth {currentDepth} nodes {nodes} eval {rootEval / 100.0} time {timer.MillisecondsElapsedThisTurn} ms {bestMove}");
+                // Console.WriteLine($"info depth {currentDepth} nodes {nodes} score cp {rootEval / 100.0} time {timer.MillisecondsElapsedThisTurn} pv {ChessChallenge.Chess.MoveUtility.GetMoveNameUCI(new(bestMove.RawValue))}");
+                Console.WriteLine( // #DEBUG
+                    "info depth {0} time {1} nodes {2} pv {3} score cp {4}", // #DEBUG
+                    currentDepth, // #DEBUG
+                    timer.MillisecondsElapsedThisTurn, // #DEBUG
+                    nodes, // #DEBUG
+                    ChessChallenge.Chess.MoveUtility.GetMoveNameUCI(new(bestMove.RawValue)), // #DEBUG
+                    rootEval // #DEBUG
+                );
                 currentDepth++;
             }
         }
@@ -72,13 +80,13 @@ public class MyBot : IChessBot
             // exit gracefully on timeout...
         }
 
-        Console.Write("MyBot: ");
-        Console.WriteLine(currentDepth - 1);
+        // Console.Write("MyBot: ");
+        // Console.WriteLine(currentDepth - 1);
 
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.Write("Eval -> ");
-        Console.WriteLine(rootEval/100.0);
-        Console.ResetColor();
+        // Console.ForegroundColor = ConsoleColor.Yellow;
+        // Console.Write("Eval -> ");
+        // Console.WriteLine(rootEval/100.0);
+        // Console.ResetColor();
 
         
         return bestMove;
