@@ -527,7 +527,9 @@ public class MyBot : IChessBot
                         }
                     }
                     // Add piece-square table bonus for quiet moves.
-                    _moveScores[i] += GetPieceSquareBonus(move.MovePieceType, move.TargetSquare, board.IsWhiteToMove);
+                    int totalPieces = BitboardHelper.GetNumberOfSetBits(board.AllPiecesBitboard);
+                    if(totalPieces > 12)
+                        _moveScores[i] += GetPieceSquareBonus(move.MovePieceType, move.TargetSquare, board.IsWhiteToMove);
                 }
 
                 if (move.IsPromotion)
