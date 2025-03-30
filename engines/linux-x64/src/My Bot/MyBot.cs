@@ -492,6 +492,19 @@ public class MyBot : IChessBot
                 }
         }
 
+        bool IsProtectingKing(Move move, Board board)
+        {
+            if (move.MovePieceType == PieceType.King)
+                return false;
+
+            Square kingSquare = board.GetKingSquare(board.IsWhiteToMove);
+            
+            int fileDiff = Math.Abs(move.TargetSquare.File - kingSquare.File);
+            int rankDiff = Math.Abs(move.TargetSquare.Rank - kingSquare.Rank);
+            
+            return fileDiff <= 2 && rankDiff <= 2;
+        }
+
         void OrderMoves(ref Span<Move> moves, bool useBestMove, int ply = -1, Move prevMove = default)
         {
             for (int i = 0; i < moves.Length; i++)
@@ -528,8 +541,12 @@ public class MyBot : IChessBot
                     }
                     // Add piece-square table bonus for quiet moves.
                     int totalPieces = BitboardHelper.GetNumberOfSetBits(board.AllPiecesBitboard);
-                    if(totalPieces > 12)
+                    if(totalPieces > 12){
                         _moveScores[i] += GetPieceSquareBonus(move.MovePieceType, move.TargetSquare, board.IsWhiteToMove);
+
+                        if(IsProtectingKing(move, board))
+                            _moveScores[i] += 5000;
+                    }
                 }
 
                 if (move.IsPromotion)
