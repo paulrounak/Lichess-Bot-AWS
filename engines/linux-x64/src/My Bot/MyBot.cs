@@ -545,7 +545,7 @@ public class MyBot : IChessBot
                         _moveScores[i] += GetPieceSquareBonus(move.MovePieceType, move.TargetSquare, board.IsWhiteToMove);
 
                         if(IsProtectingKing(move, board))
-                            _moveScores[i] += 5000;
+                            _moveScores[i] += 500000 / _pieceValues[(int)move.MovePieceType];
                     }
                 }
 
